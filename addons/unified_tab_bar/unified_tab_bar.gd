@@ -1,7 +1,6 @@
 @tool
 extends EditorPlugin
 
-
 var editor_script_list:ItemList
 var script_list_cache = {}
 var editor_script_file_popup:PopupMenu
@@ -19,16 +18,16 @@ var gui_input_callable
 var preview_panel:Control
 var popup:PopupMenu
 
-var replace_tab_bar:=TabBar.new()
+var replace_tab_bar:= TabBar.new()
 
 var tab_data = {}
 var current_tab
 var new_scene_flag:=false
+var building_tabs_flag:= false
 
 var _last_open_tab_titles_hash:int
 var _last_script_titles_hash:int
 
-var building_tabs = false
 
 func _enter_tree() -> void:
 	EditorInterface.get_resource_filesystem().filesystem_changed.connect(_on_fs_changed, 1)
@@ -81,16 +80,10 @@ func _enter_tree() -> void:
 	
 	replace_tab_bar.mouse_exited.connect(_on_replace_tab_mouse_exited)
 	
-	#editor_tab_bar.draw.connect(_on_redraw)
-	
 	new_scene_button = editor_tab_bar.get_child(0)
 	new_scene_button.pressed.connect(_on_new_scene_button_pressed)
 	
-	#editor_tab_bar.get_parent_control().draw.connect(_on_redraw)
-	
-	
 	editor_tab_bar.replace_by(replace_tab_bar)
-	
 	replace_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	replace_tab_bar.drag_to_rearrange_enabled = true
 	replace_tab_bar.tab_close_display_policy = TabBar.CLOSE_BUTTON_SHOW_ACTIVE_ONLY
@@ -111,18 +104,7 @@ func _exit_tree() -> void:
 	editor_tab_bar.gui_input.connect(gui_input_callable)
 
 
-func _on_scene_changed(new_root:Node):
-	#_swap_to_scene_editor() # needed for when selected from file system dock
-	pass
-
-func _on_main_screen_changed(new_screen):
-	_refresh_replace_bar()
-
-func _on_filesystem_file_activated():
-	var selected = EditorInterface.get_selected_paths()
-	if selected.is_empty():return
-	if selected[0].ends_with(".tscn"):
-		_swap_to_scene_editor()
+#region refresh
 
 func _process(delta: float) -> void:
 	var editor_tab_names = _get_scene_tab_hash_array()
@@ -138,9 +120,39 @@ func _process(delta: float) -> void:
 	if not refreshing and new_scene_button.get_rect().intersects(replace_tab_bar.get_tab_rect(replace_tab_bar.tab_count - 1)):
 		_move_new_button()
 
+func _get_scene_tab_hash_array():
+	var titles = []
+	for i in range(editor_tab_bar.tab_count):
+		titles.append(editor_tab_bar.get_tab_title(i))
+	titles.append(editor_tab_bar.current_tab)
+	return titles
+
+func _get_script_list_hash_array():
+	var names = []
+	for i in range(editor_script_list.item_count):
+		names.append(editor_script_list.get_item_text(i))
+	names.append_array(editor_script_list.get_selected_items())
+	return names
+
+func _on_main_screen_changed(new_screen):
+	_refresh_replace_bar()
+
+func _on_filesystem_file_activated():
+	var selected = EditorInterface.get_selected_paths()
+	if selected.is_empty():return
+	if selected[0].ends_with(".tscn"):
+		_swap_to_scene_editor()
+
+func _on_fs_changed():
+	_build_replace_bar()
+
+#endregion
+
+
+#region Replace Tab Bar Signals
 
 func _on_replace_tab_bar_pressed(idx:int):
-	if building_tabs:return
+	if building_tabs_flag:return
 	#print("PRESSED: %s" % idx)
 	current_tab = idx
 	if is_valid_scene_tab(idx):
@@ -155,7 +167,6 @@ func _on_replace_tab_bar_pressed(idx:int):
 	var title = replace_tab_bar.get_tab_title(idx)
 	_open_script_by_name(title)
 	EditorInterface.set_main_screen_editor("Script")
-
 
 func _on_replace_tab_bar_hovered(idx:int):
 	if is_valid_scene_tab(idx):
@@ -178,7 +189,6 @@ func _on_replace_tab_button_pressed(idx:int):
 	printerr("IS THIS EVER CALLED? - UnifiedTabBar - _on_replace_tab_button_pressed")
 	pass
 
-
 func _replace_gui_input(event:InputEvent):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
@@ -191,41 +201,64 @@ func _replace_gui_input(event:InputEvent):
 func _on_replace_tab_mouse_exited():
 	editor_tab_bar.mouse_exited.emit()
 
-func _on_editor_tab_bar_pressed(idx:int):
-	print("EDITOR PRESSED")
+#endregion
 
 
-func _on_editor_tab_bar_hovered(idx:int):
-	print("EDITOR HOVERED")
+#region obsolete
 
-
-
-func _on_editor_tab_rearranged(to_idx:int):
-	print("EDITOR REARRANGED")
-
-func _on_editor_tab_closed(idx:int):
-	print("EDITOR CLOSED")
-
-func _on_editor_tab_button_pressed(idx:int):
-	print("EDITOR BUTTON PRESSED")
+func _on_scene_changed(new_root:Node): # this should be able to go
+	#_swap_to_scene_editor() 
 	pass
 
+func _on_script_opened(script): # this should be able to go
+	return
+	#if not is_instance_valid(script):
+		#return
+	#if _script_opened_in_replace_bar(script):
+		#return
+	#_new_script_tab(script)
+	#_refresh_replace_bar()
+
+#func _script_opened_in_replace_bar(script):
+	#for i in range(replace_tab_bar.tab_count):
+		#var meta = replace_tab_bar.get_tab_metadata(i)
+		#if meta and meta == script.resource_path:
+			#return true
+	#return false
+
+#func get_scene_path(idx:int):
+	#var adjusted_idx = _get_adjusted_idx(idx)
+	#if adjusted_idx == -1:
+		#return
+	#var _name = editor_tab_bar.get_tab_title(adjusted_idx)
+	#var current_open_scenes = EditorInterface.get_open_scenes()
+	#for path in current_open_scenes:
+		#if path.get_basename().ends_with(_name):
+			#return path
+
+#func _get_adjusted_idx(idx:int):
+	#var adjusted_idx = -1
+	#for i in range(editor_tab_bar.tab_count):
+		#if editor_tab_bar.get_tab_metadata(i) == null:
+			#adjusted_idx += 1
+		#if i == idx:
+			#return i
+	#return -1
+
+#func _new_script_tab(title):
+	#var cache_data = script_list_cache.get(title)
+	#if cache_data == null:
+		#return
+	#cache_data = script_list_cache.get(title)
+	#var icon = cache_data.get("icon", EditorInterface.get_editor_theme().get_icon("GDScript", "EditorIcons"))
+	#var path = cache_data.get("path")
+	#replace_tab_bar.add_tab(title,  icon)
+	#replace_tab_bar.set_tab_metadata(replace_tab_bar.tab_count - 1, path)
+
+#endregion
 
 
-func _on_editor_gui_input(event:InputEvent):
-	print("EDITOR GUI")
-
-func _on_new_scene_button_pressed():
-	new_scene_flag = true
-	#EditorInterface.set_main_screen_editor.call_deferred("3D")
-
-func _on_script_opened(script):
-	if not is_instance_valid(script):
-		return
-	if _script_opened_in_replace_bar(script):
-		return
-	_new_script_tab(script)
-	_refresh_replace_bar()
+#region Tab Build
 
 func _index_tabs():
 	current_tab = replace_tab_bar.current_tab
@@ -240,36 +273,21 @@ func _index_tabs():
 			tab_data[i]["meta"] = meta
 
 
-func _on_fs_changed():
-	_build_replace_bar()
-
-func _editor_tab_bar_event(a=null, b=null, c=null):
-	_refresh_replace_bar()
-	pass
-
-func _on_redraw():
-	#print("REDRAW")
-	_refresh_replace_bar()
-
 func _refresh_replace_bar():
-	#print("refresh")
-	#if _build_replace_bar != null and _build_replace_bar.is_valid():
 	_build_replace_bar.call_deferred()
-	
-
+	#print("refresh")
 
 func _build_replace_bar():
 	#tab_data.clear()
 	
 	current_tab = replace_tab_bar.current_tab
-	building_tabs = true
+	building_tabs_flag = true
 	replace_tab_bar.clear_tabs()
 
 	var current_tab_name = _get_current_editor_tab_name()
-	
 	populate_script_list_cache()
 	var open_scripts = script_list_cache.keys()
-	var open_scene_titles = get_current_tab_titles()
+	var open_scene_titles = get_current_editor_tab_titles()
 	
 	var current = {}
 	if not tab_data.is_empty():
@@ -306,17 +324,23 @@ func _build_replace_bar():
 			continue
 		if title == current_tab_name:
 			current_tab = i
-		_new_tab_scene(title, editor_tab_bar.get_tab_icon(i))
+		replace_tab_bar.add_tab(title, editor_tab_bar.get_tab_icon(i))
 	
 	
 	for title in open_scripts:
 		var cache_data = script_list_cache.get(title)
+		if cache_data == null:
+			continue
 		if title in current:
 			replace_tab_bar.set_tab_metadata(current[title], cache_data.get("path"))
 			continue
 		if title == current_tab_name:
 			current_tab = replace_tab_bar.tab_count
-		_new_script_tab(title)
+		
+		var icon = cache_data.get("icon", EditorInterface.get_editor_theme().get_icon("GDScript", "EditorIcons"))
+		var path = cache_data.get("path")
+		replace_tab_bar.add_tab(title,  icon)
+		replace_tab_bar.set_tab_metadata(replace_tab_bar.tab_count - 1, path)
 	
 	
 	if current_tab is int:
@@ -328,7 +352,8 @@ func _build_replace_bar():
 	
 	_index_tabs()
 	_move_new_button.call_deferred()
-	building_tabs = false
+	building_tabs_flag = false
+
 
 func _get_current_editor_tab_name():
 	var current_main_screen
@@ -345,113 +370,7 @@ func _get_current_editor_tab_name():
 			var sel_items = editor_script_list.get_selected_items()
 			if not sel_items.is_empty():
 				return editor_script_list.get_item_text(sel_items[0])
-	
 	return ""
-
-func _move_new_button():
-	var tab_button = replace_tab_bar.get_child(0)
-	var rect = replace_tab_bar.get_tab_rect(replace_tab_bar.tab_count - 1)
-	tab_button.position.x = rect.size.x + rect.position.x
-
-func _handle_new_scene():
-	new_scene_flag = false
-	replace_tab_bar.current_tab = replace_tab_bar.tab_count - 1
-	EditorInterface.set_main_screen_editor.call_deferred("2D")
-
-func _new_script_tab(title):
-	var cache_data = script_list_cache.get(title)
-	if cache_data == null:
-		return
-	cache_data = script_list_cache.get(title)
-	var icon = cache_data.get("icon", EditorInterface.get_editor_theme().get_icon("GDScript", "EditorIcons"))
-	var path = cache_data.get("path")
-	replace_tab_bar.add_tab(title,  icon)
-	replace_tab_bar.set_tab_metadata(replace_tab_bar.tab_count - 1, path)
-
-func _new_tab_scene(title, icon=null):
-	replace_tab_bar.add_tab(title, icon)
-
-
-func is_valid_scene_tab(idx:int):
-	return replace_tab_bar.get_tab_metadata(idx) == null
-
-func _get_adjusted_idx(idx:int):
-	var adjusted_idx = -1
-	for i in range(editor_tab_bar.tab_count):
-		if editor_tab_bar.get_tab_metadata(i) == null:
-			adjusted_idx += 1
-		if i == idx:
-			return i
-	return -1
-
-func _get_editor_tab_mirror(idx:int):
-	return _get_editor_tab_index(_get_tab_name(idx))
-
-func _get_tab_name(idx:int):
-	return replace_tab_bar.get_tab_title(idx)
-
-func _get_editor_tab_index(_name):
-	for i in range(editor_tab_bar.tab_count):
-		if editor_tab_bar.get_tab_title(i) == _name:
-			return i
-	return -1
-
-
-func _script_opened_in_replace_bar(script):
-	for i in range(replace_tab_bar.tab_count):
-		var meta = replace_tab_bar.get_tab_metadata(i)
-		if meta and meta == script.resource_path:
-			return true
-	return false
-
-
-func populate_script_list_cache():
-	script_list_cache = {}
-	var paths = []
-	for i in range(editor_script_list.item_count):
-		var title = editor_script_list.get_item_text(i)
-		var icon = editor_script_list.get_item_icon(i)
-		var path = editor_script_list.get_item_tooltip(i)
-		script_list_cache[title] = {"path": path, "icon": icon}
-		paths.append(path)
-	
-	return paths
-	for script in EditorInterface.get_script_editor().get_open_scripts():
-		paths.append(script.resource_path)
-	return paths
-
-func get_current_tab_titles():
-	var titles = []
-	for i in range(editor_tab_bar.tab_count):
-		titles.append(editor_tab_bar.get_tab_title(i))
-	return titles
-
-func _move_preview(idx:int):
-	preview_panel.position = Vector2.ZERO
-	var tab_rect = replace_tab_bar.get_tab_rect(idx)
-	var new_position = tab_rect.position
-	new_position.y += tab_rect.size.y
-	preview_panel.get_child(0).position = new_position
-
-func _swap_to_scene_editor():
-	var scene_root = EditorInterface.get_edited_scene_root()
-	if scene_root is Node3D:
-		EditorInterface.set_main_screen_editor("3D")
-	elif scene_root is Control or scene_root is Node2D:
-		EditorInterface.set_main_screen_editor("2D")
-	else: # handles node, not sure which would be appropriate
-		EditorInterface.set_main_screen_editor("2D")
-	_refresh_replace_bar()
-
-func get_scene_path(idx:int):
-	var adjusted_idx = _get_adjusted_idx(idx)
-	if adjusted_idx == -1:
-		return
-	var _name = editor_tab_bar.get_tab_title(adjusted_idx)
-	var current_open_scenes = EditorInterface.get_open_scenes()
-	for path in current_open_scenes:
-		if path.get_basename().ends_with(_name):
-			return path
 
 func _can_clear_tab(title, titles_array):
 	var clear_tab = true
@@ -474,6 +393,69 @@ func _can_clear_tab(title, titles_array):
 		clear_tab = false
 	return {"clear":clear_tab, "title":title}
 
+func _move_new_button():
+	var tab_button = replace_tab_bar.get_child(0)
+	var rect = replace_tab_bar.get_tab_rect(replace_tab_bar.tab_count - 1)
+	tab_button.position.x = rect.size.x + rect.position.x
+
+func _on_new_scene_button_pressed():
+	new_scene_flag = true
+
+func _handle_new_scene():
+	new_scene_flag = false
+	replace_tab_bar.current_tab = replace_tab_bar.tab_count - 1
+	EditorInterface.set_main_screen_editor.call_deferred("2D")
+
+#endregion
+
+
+#region Editor Tab Utils
+
+func is_valid_scene_tab(idx:int):
+	return replace_tab_bar.get_tab_metadata(idx) == null
+
+func _get_editor_tab_mirror(idx:int):
+	return _get_editor_tab_index(_get_tab_name(idx))
+
+func _get_tab_name(idx:int):
+	return replace_tab_bar.get_tab_title(idx)
+
+func _get_editor_tab_index(_name):
+	for i in range(editor_tab_bar.tab_count):
+		if editor_tab_bar.get_tab_title(i) == _name:
+			return i
+	return -1
+
+func get_current_editor_tab_titles():
+	var titles = []
+	for i in range(editor_tab_bar.tab_count):
+		titles.append(editor_tab_bar.get_tab_title(i))
+	return titles
+
+#endregion
+
+
+#region Misc Editor
+
+func _move_preview(idx:int):
+	preview_panel.position = Vector2.ZERO
+	var tab_rect = replace_tab_bar.get_tab_rect(idx)
+	var new_position = tab_rect.position
+	new_position.y += tab_rect.size.y
+	preview_panel.get_child(0).position = new_position
+
+
+func _swap_to_scene_editor():
+	var scene_root = EditorInterface.get_edited_scene_root()
+	if scene_root is Node3D:
+		EditorInterface.set_main_screen_editor("3D")
+	elif scene_root is Control or scene_root is Node2D:
+		EditorInterface.set_main_screen_editor("2D")
+	else: # handles node, not sure which would be appropriate
+		EditorInterface.set_main_screen_editor("2D")
+	_refresh_replace_bar()
+
+
 func _set_editor_elements():
 	var scene_tabs = EditorInterface.get_base_control().find_children("*", "EditorSceneTabs",true, false)[0]
 	editor_tab_bar = scene_tabs.get_child(0).get_child(0).get_child(0) as TabBar
@@ -483,6 +465,26 @@ func _set_editor_elements():
 	var lists = EditorInterface.get_script_editor().find_children("*", "ItemList", true, false)
 	editor_script_list = lists[0]
 	editor_script_file_popup = EditorInterface.get_script_editor().get_child(0).get_child(0).get_child(0).get_child(0, true)
+
+#endregion
+
+
+#region Script List Utils
+
+func populate_script_list_cache():
+	script_list_cache = {}
+	var paths = []
+	for i in range(editor_script_list.item_count):
+		var title = editor_script_list.get_item_text(i)
+		var icon = editor_script_list.get_item_icon(i)
+		var path = editor_script_list.get_item_tooltip(i)
+		script_list_cache[title] = {"path": path, "icon": icon}
+		paths.append(path)
+	
+	return paths
+	for script in EditorInterface.get_script_editor().get_open_scripts():
+		paths.append(script.resource_path)
+	return paths
 
 func _open_script_by_name(_name):
 	var target_i = _get_script_item_idx(_name)
@@ -512,17 +514,4 @@ func _get_script_item_idx(_name):
 			return i
 	return -1
 
-
-func _get_scene_tab_hash_array():
-	var titles = []
-	for i in range(editor_tab_bar.tab_count):
-		titles.append(editor_tab_bar.get_tab_title(i))
-	titles.append(editor_tab_bar.current_tab)
-	return titles
-
-func _get_script_list_hash_array():
-	var names = []
-	for i in range(editor_script_list.item_count):
-		names.append(editor_script_list.get_item_text(i))
-	names.append_array(editor_script_list.get_selected_items())
-	return names
+#endregion
