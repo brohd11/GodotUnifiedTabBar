@@ -89,6 +89,7 @@ func _enter_tree() -> void:
 	replace_tab_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	replace_tab_bar.drag_to_rearrange_enabled = true
 	replace_tab_bar.tab_close_display_policy = TabBar.CLOSE_BUTTON_SHOW_ACTIVE_ONLY
+	replace_tab_bar.select_with_rmb = true
 	
 	_refresh_replace_bar()
 
@@ -202,11 +203,21 @@ func _on_replace_tab_button_pressed(idx:int):
 func _replace_gui_input(event:InputEvent):
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-			if is_valid_scene_tab(replace_tab_bar.current_tab):
-				add_child(editor_tab_bar)
-				gui_input_callable.call(event)
-				popup.position = DisplayServer.mouse_get_position()
-				remove_child(editor_tab_bar)
+			_on_right_clicked.call_deferred(event)
+
+func _on_right_clicked(event:InputEvent):
+	var tab_idx_at_pos = replace_tab_bar.get_tab_idx_at_point(replace_tab_bar.get_local_mouse_position())
+	if tab_idx_at_pos == -1:
+		return
+	if is_valid_scene_tab(tab_idx_at_pos):
+		add_child(editor_tab_bar)
+		gui_input_callable.call(event)
+		popup.position = DisplayServer.mouse_get_position()
+		remove_child(editor_tab_bar)
+	else:
+		var idx = _get_script_item_idx(_get_replace_tab_name(tab_idx_at_pos))
+		if idx != -1:
+			editor_script_list.item_clicked.emit(idx, DisplayServer.mouse_get_position() , 2)
 
 func _on_replace_tab_mouse_exited():
 	editor_tab_bar.mouse_exited.emit()
@@ -392,9 +403,9 @@ func is_valid_scene_tab(idx:int):
 	return replace_tab_bar.get_tab_metadata(idx) == null
 
 func _get_editor_tab_mirror(idx:int):
-	return _get_editor_tab_index(_get_tab_name(idx))
+	return _get_editor_tab_index(_get_replace_tab_name(idx))
 
-func _get_tab_name(idx:int):
+func _get_replace_tab_name(idx:int):
 	return replace_tab_bar.get_tab_title(idx)
 
 #endregion
