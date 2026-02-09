@@ -1,6 +1,8 @@
 @tool
 extends EditorPlugin
 
+const CONFIG_PATH = "res://.godot/addons/unified_tab_bar/persistence.cfg"
+
 var editor_script_list:ItemList
 var script_list_cache = {}
 var editor_script_file_popup:PopupMenu
@@ -30,6 +32,8 @@ var _last_script_titles_hash:int
 
 
 func _enter_tree() -> void:
+	#tab_data = _load_persistence()
+	#print("LOADED: ", tab_data)
 	EditorInterface.get_resource_filesystem().filesystem_changed.connect(_on_fs_changed, 1)
 	EditorInterface.get_script_editor().editor_script_changed.connect(_on_script_opened, 1)
 	var tree = EditorInterface.get_file_system_dock().find_children("*", "Tree", true, false)[0] as Tree
@@ -91,6 +95,8 @@ func _enter_tree() -> void:
 	_refresh_replace_bar()
 
 func _exit_tree() -> void:
+	#_save_persisitence()
+	
 	if is_instance_valid(replace_tab_bar):
 		replace_tab_bar.replace_by(editor_tab_bar)
 	
@@ -103,6 +109,12 @@ func _exit_tree() -> void:
 	editor_tab_bar.tab_close_pressed.connect(tab_close_callable)
 	editor_tab_bar.gui_input.connect(gui_input_callable)
 
+func _get_window_layout(configuration: ConfigFile) -> void:
+	_save_persisitence()
+
+func _set_window_layout(configuration: ConfigFile) -> void:
+	tab_data = _load_persistence()
+	_refresh_replace_bar()
 
 #region refresh
 
@@ -293,7 +305,8 @@ func _build_replace_bar():
 	if not tab_data.is_empty():
 		for i in range(tab_data.size()):
 			var data = tab_data[i]
-			var title = data.title
+			var title = data.get("title")
+			var icon = data.get("icon")
 			var meta = data.get("meta")
 			if meta != null:
 				var clear_data = _can_clear_tab(title, open_scripts)
@@ -301,18 +314,22 @@ func _build_replace_bar():
 					tab_data.erase(i)
 					continue
 				title = clear_data.get("title")
+				if icon == null:
+					icon = _get_script_icon(title)
 			else:
 				var clear_data = _can_clear_tab(title, open_scene_titles)
 				if clear_data.get("clear"):
 					tab_data.erase(i)
 					continue
 				title = clear_data.get("title")
+				if icon == null:
+					icon = _get_tab_icon(title)
 			
 			if title == current_tab_name:
 				current_tab = replace_tab_bar.tab_count
 			replace_tab_bar.add_tab(title)
 			var new_idx = replace_tab_bar.tab_count - 1
-			replace_tab_bar.set_tab_icon(new_idx, data.icon)
+			replace_tab_bar.set_tab_icon(new_idx, icon)
 			if meta != null:
 				replace_tab_bar.set_tab_metadata(new_idx, meta)
 			current[title] = new_idx
@@ -408,8 +425,7 @@ func _handle_new_scene():
 
 #endregion
 
-
-#region Editor Tab Utils
+#region Replace Utils
 
 func is_valid_scene_tab(idx:int):
 	return replace_tab_bar.get_tab_metadata(idx) == null
@@ -419,6 +435,11 @@ func _get_editor_tab_mirror(idx:int):
 
 func _get_tab_name(idx:int):
 	return replace_tab_bar.get_tab_title(idx)
+
+#endregion
+
+
+#region Editor Tab Utils
 
 func _get_editor_tab_index(_name):
 	for i in range(editor_tab_bar.tab_count):
@@ -431,6 +452,11 @@ func get_current_editor_tab_titles():
 	for i in range(editor_tab_bar.tab_count):
 		titles.append(editor_tab_bar.get_tab_title(i))
 	return titles
+
+func _get_tab_icon(_name):
+	var idx = _get_editor_tab_index(_name)
+	if idx != -1:
+		return editor_tab_bar.get_tab_icon(idx)
 
 #endregion
 
@@ -513,5 +539,38 @@ func _get_script_item_idx(_name):
 		if editor_script_list.get_item_text(i) == _name:
 			return i
 	return -1
+
+func _get_script_icon(_name):
+	var idx = _get_script_item_idx(_name)
+	if idx != -1:
+		return editor_script_list.get_item_icon(idx)
+
+#endregion
+
+#region Persistence
+
+func _load_persistence():
+	var config = ConfigFile.new()
+	if not FileAccess.file_exists(CONFIG_PATH):
+		DirAccess.make_dir_recursive_absolute(CONFIG_PATH.get_base_dir())
+		config.set_value("unified_tab_bar", "tabs", {})
+		config.save(CONFIG_PATH)
+		return {}
+	var err = config.load(CONFIG_PATH)
+	if err == OK:
+		return config.get_value("unified_tab_bar", "tabs", {})
+
+func _save_persisitence():
+	DirAccess.make_dir_recursive_absolute(CONFIG_PATH.get_base_dir())
+	var save_dict = {}
+	for idx in tab_data.keys():
+		var data = tab_data[idx]
+		data.erase("icon")
+		save_dict[idx] = data
+	var config = ConfigFile.new()
+	config.set_value("unified_tab_bar", "tabs", save_dict)
+	var err = config.save(CONFIG_PATH)
+	if err != OK:
+		printerr("Could not save UnifiedTabBar data: %s" % CONFIG_PATH)
 
 #endregion
