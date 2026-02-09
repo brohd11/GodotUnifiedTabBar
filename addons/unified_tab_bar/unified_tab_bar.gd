@@ -2,8 +2,12 @@
 extends EditorPlugin
 
 
+var editor_script_list:ItemList
+var script_list_cache = {}
+var editor_script_file_popup:PopupMenu
 
 var editor_tab_bar:TabBar
+
 var selected_callable
 var hovered_callable
 var rearranged_callable
@@ -20,6 +24,7 @@ var tab_data = {}
 var current_tab
 
 var _last_open_tab_titles_hash:int
+var _last_script_titles_hash:int
 
 var building_tabs = false
 
@@ -31,7 +36,7 @@ func _enter_tree() -> void:
 	
 	for data in editor_tab_bar.get_signal_list():
 		var sig = data.name
-		print(editor_tab_bar.get_signal_connection_list(sig))
+		#print(editor_tab_bar.get_signal_connection_list(sig))
 		var con_list = editor_tab_bar.get_signal_connection_list(sig)
 		for con_data in con_list:
 			
@@ -70,6 +75,8 @@ func _enter_tree() -> void:
 	replace_tab_bar.tab_button_pressed.connect(_on_replace_tab_button_pressed)
 	replace_tab_bar.gui_input.connect(_replace_gui_input)
 	
+	replace_tab_bar.mouse_exited.connect(_on_replace_tab_mouse_exited)
+	
 	editor_tab_bar.draw.connect(_on_redraw)
 	
 	
@@ -104,17 +111,19 @@ func _exit_tree() -> void:
 	
 
 func _process(delta: float) -> void:
-	var editor_tab_names = get_current_tab_titles()
-	var _hash = editor_tab_names.hash()
-	if _hash != _last_open_tab_titles_hash:
+	var editor_tab_names = _get_scene_tab_hash_array()
+	var scene_hash = editor_tab_names.hash()
+	var script_list_names = _get_script_list_hash_array()
+	var _script_hash = script_list_names.hash()
+	if scene_hash != _last_open_tab_titles_hash or _script_hash != _last_script_titles_hash:
 		_refresh_replace_bar()
-	_last_open_tab_titles_hash = _hash
-	pass
+	_last_open_tab_titles_hash = scene_hash
+	_last_script_titles_hash = _script_hash
 
 
 func _on_replace_tab_bar_pressed(idx:int):
 	if building_tabs:return
-	print("PRESSED: %s" % idx)
+	#print("PRESSED: %s" % idx)
 	current_tab = idx
 	if is_valid_scene_tab(idx):
 		selected_callable.call(_get_editor_tab_mirror(idx))
@@ -125,9 +134,12 @@ func _on_replace_tab_bar_pressed(idx:int):
 	if metadata == null:
 		return
 	
+	var title = replace_tab_bar.get_tab_title(idx)
+	_open_script_by_name(title)
+	
 	EditorInterface.set_main_screen_editor("Script")
-	EditorInterface.edit_script(load(metadata))
-	_refresh_replace_bar()
+	#EditorInterface.edit_script(load(metadata))
+	#_refresh_replace_bar()s
 
 
 func _on_replace_tab_bar_hovered(idx:int):
@@ -143,14 +155,16 @@ func _on_replace_tab_rearranged(to_idx:int):
 
 func _on_replace_tab_closed(idx:int):
 	if is_valid_scene_tab(idx):
-		print("DELETE: ", _get_editor_tab_mirror(idx))
+		#print("DELETE: ", _get_editor_tab_mirror(idx))
 		tab_close_callable.call(_get_editor_tab_mirror(idx))
 	else:
-		replace_tab_bar.remove_tab(idx)
+		#replace_tab_bar.remove_tab(idx)
+		var title = replace_tab_bar.get_tab_title(idx)
+		_close_script(title)
 	_refresh_replace_bar()
 
 func _on_replace_tab_button_pressed(idx:int):
-	print("TAB BUTTON PRESSED REPLACE")
+	#print("TAB BUTTON PRESSED REPLACE")
 	pass
 
 
@@ -163,6 +177,9 @@ func _replace_gui_input(event:InputEvent):
 				gui_input_callable.call(event)
 				popup.position = DisplayServer.mouse_get_position()
 				remove_child(editor_tab_bar)
+
+func _on_replace_tab_mouse_exited():
+	editor_tab_bar.mouse_exited.emit()
 
 func _on_editor_tab_bar_pressed(idx:int):
 	print("EDITOR PRESSED")
@@ -195,7 +212,7 @@ func _on_script_opened(script):
 		return
 	if _script_opened_in_replace_bar(script):
 		return
-	_new_tab_replace(script)
+	_new_script_tab(script)
 	_refresh_replace_bar()
 
 func _index_tabs():
@@ -219,11 +236,11 @@ func _editor_tab_bar_event(a=null, b=null, c=null):
 	pass
 
 func _on_redraw():
-	print("REDRAW")
+	#print("REDRAW")
 	_refresh_replace_bar()
 
 func _refresh_replace_bar():
-	print("refresh")
+	#print("refresh")
 	#if _build_replace_bar != null and _build_replace_bar.is_valid():
 	_build_replace_bar.call_deferred()
 	
@@ -231,14 +248,15 @@ func _refresh_replace_bar():
 
 func _build_replace_bar():
 	#tab_data.clear()
-	
+	current_tab = replace_tab_bar.current_tab
 	building_tabs = true
-	
-	#print(tab_data)
-	
 	replace_tab_bar.clear_tabs()
+	#print(tab_data)
+	var current_tab_name = _get_current_editor_tab_name()
+	#print(current_tab_name)
 	
-	var open_scripts = get_current_open_script_paths()
+	populate_script_list_cache()
+	var open_scripts = script_list_cache.keys()
 	var open_scene_titles = get_current_tab_titles()
 	
 	var current = {}
@@ -248,30 +266,20 @@ func _build_replace_bar():
 			var title = data.title
 			var meta = data.get("meta")
 			if meta != null:
-				if not meta in open_scripts:
+				var clear_data = _can_clear_tab(title, open_scripts)
+				if clear_data.get("clear"):
 					tab_data.erase(i)
 					continue
+				title = clear_data.get("title")
 			else:
-				var clear_tab = true
-				var raw_title = title
-				var unsaved_title = title
-				if title.ends_with("(*)"):
-					raw_title = raw_title.trim_suffix("(*)")
-				else:
-					unsaved_title = title + "(*)"
-				if raw_title in open_scene_titles:
-					title = raw_title
-					clear_tab = false
-				if title in open_scene_titles:
-					clear_tab = false
-				if unsaved_title in open_scene_titles:
-					title = unsaved_title
-					clear_tab = false
-				if clear_tab:
-					print("CLEAR: ", title)
+				var clear_data = _can_clear_tab(title, open_scene_titles)
+				if clear_data.get("clear"):
 					tab_data.erase(i)
 					continue
+				title = clear_data.get("title")
 			
+			if title == current_tab_name:
+				current_tab = replace_tab_bar.tab_count
 			replace_tab_bar.add_tab(title)
 			var new_idx = replace_tab_bar.tab_count - 1
 			replace_tab_bar.set_tab_icon(new_idx, data.icon)
@@ -284,21 +292,20 @@ func _build_replace_bar():
 		var title = editor_tab_bar.get_tab_title(i)
 		if title in current:
 			continue
+		if title == current_tab_name:
+			current_tab = i
 		_new_tab_scene(title, editor_tab_bar.get_tab_icon(i))
 	
 	
-	for script in EditorInterface.get_script_editor().get_open_scripts():
-		var title = script.resource_path.get_file()
+	for title in open_scripts:
+		var cache_data = script_list_cache.get(title)
 		if title in current:
-			replace_tab_bar.set_tab_metadata(current[title], script.resource_path)
+			replace_tab_bar.set_tab_metadata(current[title], cache_data.get("path"))
 			continue
-		_new_tab_replace(script)
+		if title == current_tab_name:
+			current_tab = replace_tab_bar.tab_count
+		_new_script_tab(title)
 	
-	#for i in range(replace_tab_bar.tab_count):
-		#var title = replace_tab_bar.get_tab_title(i)
-		#var tab_idx = tab_data.get(title)
-		#if tab_idx != null:
-			#editor_tab_bar.move_tab(i, tab_idx)
 	
 	if current_tab is int:
 		current_tab = min(current_tab, replace_tab_bar.tab_count - 1)
@@ -308,17 +315,39 @@ func _build_replace_bar():
 	_move_new_button.call_deferred()
 	building_tabs = false
 
+func _get_current_editor_tab_name():
+	var current_main_screen
+	for child in EditorInterface.get_editor_main_screen().get_children():
+		if child.visible:
+			current_main_screen = child
+			break
+	var main_screen_class = current_main_screen.get_class()
+	if main_screen_class == "CanvasItemEditor" or main_screen_class == "Node3DEditor":
+		return editor_tab_bar.get_tab_title(editor_tab_bar.current_tab)
+	elif main_screen_class == "WindowWrapper":
+		var content = current_main_screen.get_child(1)
+		if content == EditorInterface.get_script_editor():
+			var sel_items = editor_script_list.get_selected_items()
+			if not sel_items.is_empty():
+				return editor_script_list.get_item_text(sel_items[0])
+	
+	return ""
+
 func _move_new_button():
 	var tab_button = replace_tab_bar.get_child(0)
 	var rect = replace_tab_bar.get_tab_rect(replace_tab_bar.tab_count - 1)
 	tab_button.position.x = rect.size.x + rect.position.x
 
 
-func _new_tab_replace(script):
-	var script_path = script.resource_path
-	
-	replace_tab_bar.add_tab(script.resource_path.get_file(), EditorInterface.get_editor_theme().get_icon("GDScript", "EditorIcons"))
-	replace_tab_bar.set_tab_metadata(replace_tab_bar.tab_count - 1, script_path)
+func _new_script_tab(title):
+	var cache_data = script_list_cache.get(title)
+	if cache_data == null:
+		return
+	cache_data = script_list_cache.get(title)
+	var icon = cache_data.get("icon", EditorInterface.get_editor_theme().get_icon("GDScript", "EditorIcons"))
+	var path = cache_data.get("path")
+	replace_tab_bar.add_tab(title,  icon)
+	replace_tab_bar.set_tab_metadata(replace_tab_bar.tab_count - 1, path)
 
 func _new_tab_scene(title, icon=null):
 	replace_tab_bar.add_tab(title, icon)
@@ -357,8 +386,17 @@ func _script_opened_in_replace_bar(script):
 	return false
 
 
-func get_current_open_script_paths():
+func populate_script_list_cache():
+	script_list_cache = {}
 	var paths = []
+	for i in range(editor_script_list.item_count):
+		var title = editor_script_list.get_item_text(i)
+		var icon = editor_script_list.get_item_icon(i)
+		var path = editor_script_list.get_item_tooltip(i)
+		script_list_cache[title] = {"path": path, "icon": icon}
+		paths.append(path)
+	
+	return paths
 	for script in EditorInterface.get_script_editor().get_open_scripts():
 		paths.append(script.resource_path)
 	return paths
@@ -396,8 +434,65 @@ func get_scene_path(idx:int):
 		if path.get_basename().ends_with(_name):
 			return path
 
+func _can_clear_tab(title, titles_array):
+	var clear_tab = true
+	var raw_title = title
+	var unsaved_title = title
+	if title.ends_with("(*)"):
+		raw_title = raw_title.trim_suffix("(*)")
+	else:
+		unsaved_title = title + "(*)"
+	if raw_title in titles_array:
+		title = raw_title
+		clear_tab = false
+	if title in titles_array:
+		clear_tab = false
+	if unsaved_title in titles_array:
+		title = unsaved_title
+		clear_tab = false
+	return {"clear":clear_tab, "title":title}
+
 func _set_editor_elements():
 	var scene_tabs = EditorInterface.get_base_control().find_children("*", "EditorSceneTabs",true, false)[0]
 	editor_tab_bar = scene_tabs.get_child(0).get_child(0).get_child(0) as TabBar
 	preview_panel = scene_tabs.get_child(1)
 	popup = scene_tabs.get_child(0).get_child(0).get_child(1)
+	
+	var lists = EditorInterface.get_script_editor().find_children("*", "ItemList", true, false)
+	editor_script_list = lists[0]
+	editor_script_file_popup = EditorInterface.get_script_editor().get_child(0).get_child(0).get_child(0).get_child(0, true)
+
+func _open_script_by_name(_name):
+	var target_i = _get_script_item_idx(_name)
+	if target_i != -1:
+		editor_script_list.select(target_i)
+		editor_script_list.item_selected.emit(target_i)
+
+func _close_script(_name):
+	var target_i = _get_script_item_idx(_name)
+	if target_i != -1:
+		editor_script_list.select(target_i)
+		editor_script_file_popup.popup()
+		editor_script_file_popup.id_pressed.emit(10)
+		editor_script_file_popup.hide()
+
+func _get_script_item_idx(_name):
+	for i in range(editor_script_list.item_count):
+		if editor_script_list.get_item_text(i) == _name:
+			return i
+	return -1
+
+
+func _get_scene_tab_hash_array():
+	var titles = []
+	for i in range(editor_tab_bar.tab_count):
+		titles.append(editor_tab_bar.get_tab_title(i))
+	titles.append(editor_tab_bar.current_tab)
+	return titles
+
+func _get_script_list_hash_array():
+	var names = []
+	for i in range(editor_script_list.item_count):
+		names.append(editor_script_list.get_item_text(i))
+	names.append_array(editor_script_list.get_selected_items())
+	return names
