@@ -7,6 +7,7 @@ var script_list_cache = {}
 var editor_script_file_popup:PopupMenu
 
 var editor_tab_bar:TabBar
+var new_scene_button:Button
 
 var selected_callable
 var hovered_callable
@@ -22,6 +23,7 @@ var replace_tab_bar:=TabBar.new()
 
 var tab_data = {}
 var current_tab
+var new_scene_flag:=false
 
 var _last_open_tab_titles_hash:int
 var _last_script_titles_hash:int
@@ -30,7 +32,15 @@ var building_tabs = false
 
 func _enter_tree() -> void:
 	EditorInterface.get_resource_filesystem().filesystem_changed.connect(_on_fs_changed, 1)
-	EditorInterface.get_script_editor().editor_script_changed.connect(_on_script_opened)
+	EditorInterface.get_script_editor().editor_script_changed.connect(_on_script_opened, 1)
+	var tree = EditorInterface.get_file_system_dock().find_children("*", "Tree", true, false)[0] as Tree
+	tree.item_activated.connect(_on_filesystem_file_activated, 1)
+	var fs_list = EditorInterface.get_file_system_dock().find_children("*", "FileSystemList", true, false)[0] as ItemList
+	fs_list.item_activated.connect(_on_filesystem_file_activated, 1)
+	
+	
+	scene_changed.connect(_on_scene_changed)
+	main_screen_changed.connect(_on_main_screen_changed)
 	
 	_set_editor_elements()
 	
@@ -61,12 +71,6 @@ func _enter_tree() -> void:
 				gui_input_callable = callable
 				editor_tab_bar.gui_input.disconnect(callable)
 	
-	#editor_tab_bar.tab_changed.connect(_on_editor_tab_bar_pressed)
-	#editor_tab_bar.tab_hovered.connect(_on_editor_tab_bar_hovered)
-	#editor_tab_bar.active_tab_rearranged.connect(_on_editor_tab_rearranged)
-	#editor_tab_bar.tab_close_pressed.connect(_on_editor_tab_closed)
-	#editor_tab_bar.tab_button_pressed.connect(_on_editor_tab_button_pressed)
-	#editor_tab_bar.gui_input.connect(_on_editor_gui_input)
 	
 	replace_tab_bar.tab_changed.connect(_on_replace_tab_bar_pressed)
 	replace_tab_bar.tab_hovered.connect(_on_replace_tab_bar_hovered)
@@ -77,10 +81,12 @@ func _enter_tree() -> void:
 	
 	replace_tab_bar.mouse_exited.connect(_on_replace_tab_mouse_exited)
 	
-	editor_tab_bar.draw.connect(_on_redraw)
+	#editor_tab_bar.draw.connect(_on_redraw)
 	
+	new_scene_button = editor_tab_bar.get_child(0)
+	new_scene_button.pressed.connect(_on_new_scene_button_pressed)
 	
-	editor_tab_bar.get_parent_control().draw.connect(_on_redraw)
+	#editor_tab_bar.get_parent_control().draw.connect(_on_redraw)
 	
 	
 	editor_tab_bar.replace_by(replace_tab_bar)
@@ -95,12 +101,7 @@ func _exit_tree() -> void:
 	if is_instance_valid(replace_tab_bar):
 		replace_tab_bar.replace_by(editor_tab_bar)
 	
-	#editor_tab_bar.tab_changed.disconnect(_on_editor_tab_bar_pressed)
-	#editor_tab_bar.tab_hovered.disconnect(_on_editor_tab_bar_hovered)
-	#editor_tab_bar.active_tab_rearranged.disconnect(_on_editor_tab_rearranged)
-	#editor_tab_bar.tab_close_pressed.disconnect(_on_editor_tab_closed)
-	#editor_tab_bar.tab_button_pressed.disconnect(_on_editor_tab_button_pressed)
-	#editor_tab_bar.gui_input.disconnect(_on_editor_gui_input)
+	new_scene_button.pressed.disconnect(_on_new_scene_button_pressed)
 	
 	editor_tab_bar.tab_changed.connect(selected_callable)
 	editor_tab_bar.tab_hovered.connect(hovered_callable)
@@ -108,17 +109,34 @@ func _exit_tree() -> void:
 	editor_tab_bar.tab_button_pressed.connect(button_pressed_callable)
 	editor_tab_bar.tab_close_pressed.connect(tab_close_callable)
 	editor_tab_bar.gui_input.connect(gui_input_callable)
-	
+
+
+func _on_scene_changed(new_root:Node):
+	#_swap_to_scene_editor() # needed for when selected from file system dock
+	pass
+
+func _on_main_screen_changed(new_screen):
+	_refresh_replace_bar()
+
+func _on_filesystem_file_activated():
+	var selected = EditorInterface.get_selected_paths()
+	if selected.is_empty():return
+	if selected[0].ends_with(".tscn"):
+		_swap_to_scene_editor()
 
 func _process(delta: float) -> void:
 	var editor_tab_names = _get_scene_tab_hash_array()
 	var scene_hash = editor_tab_names.hash()
 	var script_list_names = _get_script_list_hash_array()
 	var _script_hash = script_list_names.hash()
+	var refreshing = false
 	if scene_hash != _last_open_tab_titles_hash or _script_hash != _last_script_titles_hash:
+		refreshing = true
 		_refresh_replace_bar()
 	_last_open_tab_titles_hash = scene_hash
 	_last_script_titles_hash = _script_hash
+	if not refreshing and new_scene_button.get_rect().intersects(replace_tab_bar.get_tab_rect(replace_tab_bar.tab_count - 1)):
+		_move_new_button()
 
 
 func _on_replace_tab_bar_pressed(idx:int):
@@ -129,17 +147,14 @@ func _on_replace_tab_bar_pressed(idx:int):
 		selected_callable.call(_get_editor_tab_mirror(idx))
 		_swap_to_scene_editor.call_deferred()
 		return
-
+	
 	var metadata = replace_tab_bar.get_tab_metadata(idx)
 	if metadata == null:
 		return
 	
 	var title = replace_tab_bar.get_tab_title(idx)
 	_open_script_by_name(title)
-	
 	EditorInterface.set_main_screen_editor("Script")
-	#EditorInterface.edit_script(load(metadata))
-	#_refresh_replace_bar()s
 
 
 func _on_replace_tab_bar_hovered(idx:int):
@@ -147,26 +162,21 @@ func _on_replace_tab_bar_hovered(idx:int):
 		hovered_callable.call(_get_editor_tab_mirror(idx))
 		_move_preview(idx)
 
-
-
 func _on_replace_tab_rearranged(to_idx:int):
 	_index_tabs()
-	_refresh_replace_bar()
+	#_refresh_replace_bar()
 
 func _on_replace_tab_closed(idx:int):
 	if is_valid_scene_tab(idx):
-		#print("DELETE: ", _get_editor_tab_mirror(idx))
 		tab_close_callable.call(_get_editor_tab_mirror(idx))
 	else:
-		#replace_tab_bar.remove_tab(idx)
 		var title = replace_tab_bar.get_tab_title(idx)
 		_close_script(title)
-	_refresh_replace_bar()
+	#_refresh_replace_bar()
 
 func _on_replace_tab_button_pressed(idx:int):
-	#print("TAB BUTTON PRESSED REPLACE")
+	printerr("IS THIS EVER CALLED? - UnifiedTabBar - _on_replace_tab_button_pressed")
 	pass
-
 
 
 func _replace_gui_input(event:InputEvent):
@@ -205,7 +215,9 @@ func _on_editor_tab_button_pressed(idx:int):
 func _on_editor_gui_input(event:InputEvent):
 	print("EDITOR GUI")
 
-
+func _on_new_scene_button_pressed():
+	new_scene_flag = true
+	#EditorInterface.set_main_screen_editor.call_deferred("3D")
 
 func _on_script_opened(script):
 	if not is_instance_valid(script):
@@ -248,12 +260,12 @@ func _refresh_replace_bar():
 
 func _build_replace_bar():
 	#tab_data.clear()
+	
 	current_tab = replace_tab_bar.current_tab
 	building_tabs = true
 	replace_tab_bar.clear_tabs()
-	#print(tab_data)
+
 	var current_tab_name = _get_current_editor_tab_name()
-	#print(current_tab_name)
 	
 	populate_script_list_cache()
 	var open_scripts = script_list_cache.keys()
@@ -311,6 +323,9 @@ func _build_replace_bar():
 		current_tab = min(current_tab, replace_tab_bar.tab_count - 1)
 		replace_tab_bar.current_tab = current_tab
 	
+	if new_scene_flag:
+		_handle_new_scene.call_deferred()
+	
 	_index_tabs()
 	_move_new_button.call_deferred()
 	building_tabs = false
@@ -338,6 +353,10 @@ func _move_new_button():
 	var rect = replace_tab_bar.get_tab_rect(replace_tab_bar.tab_count - 1)
 	tab_button.position.x = rect.size.x + rect.position.x
 
+func _handle_new_scene():
+	new_scene_flag = false
+	replace_tab_bar.current_tab = replace_tab_bar.tab_count - 1
+	EditorInterface.set_main_screen_editor.call_deferred("2D")
 
 func _new_script_tab(title):
 	var cache_data = script_list_cache.get(title)
@@ -436,6 +455,9 @@ func get_scene_path(idx:int):
 
 func _can_clear_tab(title, titles_array):
 	var clear_tab = true
+	if title == "[empty]":
+		if "[unsaved](*)" in titles_array:
+			return {"clear":false, "title":"[unsaved](*)"}
 	var raw_title = title
 	var unsaved_title = title
 	if title.ends_with("(*)"):
@@ -469,11 +491,19 @@ func _open_script_by_name(_name):
 		editor_script_list.item_selected.emit(target_i)
 
 func _close_script(_name):
+	var version = Engine.get_version_info()
+	var id = 10
+	if version.minor < 6:
+		id = 10
+	elif version.minor == 6:
+		id = 15
+	
 	var target_i = _get_script_item_idx(_name)
 	if target_i != -1:
 		editor_script_list.select(target_i)
-		editor_script_file_popup.popup()
-		editor_script_file_popup.id_pressed.emit(10)
+		if editor_script_file_popup.item_count == 0:
+			editor_script_file_popup.popup()
+		editor_script_file_popup.id_pressed.emit(id)
 		editor_script_file_popup.hide()
 
 func _get_script_item_idx(_name):

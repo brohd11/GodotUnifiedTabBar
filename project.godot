@@ -24,4 +24,4 @@ project/assembly_name="test-tabs"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/unified_tab_bar/plugin.cfg")
+enabled=PackedStringArray("res://addons/plugin_devtools/plugin.cfg", "res://addons/unified_tab_bar/plugin.cfg")
